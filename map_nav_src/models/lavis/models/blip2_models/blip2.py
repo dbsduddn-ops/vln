@@ -39,7 +39,7 @@ class Blip2Base(BaseModel):
         enable_autocast = self.device != torch.device("cpu")
 
         if enable_autocast:
-            return torch.cuda.amp.autocast(dtype=dtype)
+            return torch.amp.autocast("cuda", dtype=dtype)
         else:
             return contextlib.nullcontext()
 

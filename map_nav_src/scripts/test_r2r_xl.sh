@@ -1,34 +1,22 @@
-DATA_ROOT=../datasets
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+MAP_NAV_SRC_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
+PROJECT_ROOT="$(cd "${MAP_NAV_SRC_DIR}/.." && pwd)"
+DATA_ROOT="${PROJECT_ROOT}/datasets"
+cd "${MAP_NAV_SRC_DIR}" || exit 1
 
 train_alg=dagger
 
 features=eva-clip-g
 ft_dim=1408
 
-CUDA_VISIBLE_DEVICES='6'
+CUDA_VISIBLE_DEVICES='3'
 ngpus=1
 
 seed=0
-batch_size=2  # per-GPU batch size; effective batch = ngpus * batch_size
+batch_size=2  # must match finetuning setup if possible
+train_data_ratio=1.0
 
-# ─── Paper Table 3 (arXiv:2407.12366 §4.4): R2R train data amount ─────────────
-# Set percent of official R2R *train* instructions (no prevalent aug in this script).
-#   TRAIN_DATA_PCT=10  -> 10%  (--train_data_ratio 0.1)
-#   TRAIN_DATA_PCT=50  -> 50%  (--train_data_ratio 0.5)
-#   TRAIN_DATA_PCT=100 -> 100% (--train_data_ratio 1.0)  [default]
-TRAIN_DATA_PCT=${TRAIN_DATA_PCT:-50}
-case "${TRAIN_DATA_PCT}" in
-  10)  train_data_ratio=0.1 ;;
-  50)  train_data_ratio=0.5 ;;
-  100) train_data_ratio=1.0 ;;
-  *)
-    echo "[run_r2r_xl] ERROR: TRAIN_DATA_PCT must be 10, 50, or 100 (got ${TRAIN_DATA_PCT})" >&2
-    exit 1
-    ;;
-esac
-
-name=NavGPT2-XL-renew-history-train50
-name=${name}-pct${TRAIN_DATA_PCT}
+name=NavGPT2-XL-renew-history
 name=${name}-seed.${seed}
 name=${name}-bs${batch_size}
 
@@ -80,8 +68,11 @@ USE_LEARNED_PROGRESS_STOP="--use_learned_progress_stop"  # set to "--use_learned
 PROGRESS_AUX_WEIGHT=0.1
 PROGRESS_TARGET=gt_path_ratio
 
+# If you want a different checkpoint, override this path.
+RESUME_FILE=${outdir}/ckpts/best_val_unseen
+
 pick_free_port() {
-  python - <<'PY'  
+  python - <<'PY'
 import socket
 s = socket.socket()
 s.bind(("", 0))
@@ -89,9 +80,6 @@ print(s.getsockname()[1])
 s.close()
 PY
 }
-
-# Debug sync mode (very slow). Keep 0 for normal training.
-CUDA_SYNC_DEBUG=0
 
 flag="--root_dir ${DATA_ROOT}
       --dataset r2r
@@ -152,36 +140,12 @@ flag="--root_dir ${DATA_ROOT}
       --progress_target ${PROGRESS_TARGET}
       ${USE_SUB_INSTR}"
 
-# ─── W&B settings ──────────────────────────────────────────────────────────────
 WANDB_PROJECT='based VLM'
 WANDB_ENTITY='Vision-Language-Navigation'
-# Run name is derived from dataset/seed/bs/IPE/sub-instr flags when --wandb_auto_name is set.
 WANDB_AUTO_NAME="--wandb_auto_name"
 
-# ─── Train ─────────────────────────────────────────────────────────────────────
-TRAIN_MASTER_PORT=$(pick_free_port)
-echo "[run_r2r_xl] train_data_ratio=${train_data_ratio} (${TRAIN_DATA_PCT}% R2R train, seed=${seed})"
-echo "[run_r2r_xl] outdir=${outdir}"
-echo "[run_r2r_xl] train master_port=${TRAIN_MASTER_PORT}"
-TRANSFORMERS_OFFLINE=1 \
-  HF_HUB_OFFLINE=1 \
-  NCCL_IB_DISABLE=1 \
-  NCCL_P2P_DISABLE=1 \
-  TORCH_NCCL_HEARTBEAT_TIMEOUT_SEC=7200 \
-  CUDA_LAUNCH_BLOCKING=${CUDA_SYNC_DEBUG} \
-  CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES} \
-  torchrun --nproc_per_node=${ngpus} --master_addr=127.0.0.1 --master_port=${TRAIN_MASTER_PORT} \
-    r2r/main_nav.py $flag \
-    --freeze_qformer \
-    --qformer_ckpt_path models/lavis/output/NavGPT-InstructBLIP-FlanT5xl/20260408054/checkpoint_best.pth \
-    --use_wandb \
-    --wandb_project "${WANDB_PROJECT}" \
-    --wandb_entity "${WANDB_ENTITY}" \
-    ${WANDB_AUTO_NAME}
-
-# ─── Test ──────────────────────────────────────────────────────────────────────
 TEST_MASTER_PORT=$(pick_free_port)
-echo "[run_r2r_xl] test master_port=${TEST_MASTER_PORT}"
+echo "[test_r2r_xl] test master_port=${TEST_MASTER_PORT}"
 TRANSFORMERS_OFFLINE=1 \
   HF_HUB_OFFLINE=1 \
   NCCL_IB_DISABLE=1 \
@@ -193,7 +157,7 @@ TRANSFORMERS_OFFLINE=1 \
     --test --submit \
     --freeze_qformer \
     --qformer_ckpt_path models/lavis/output/NavGPT-InstructBLIP-FlanT5xl/20260408054/checkpoint_best.pth \
-    --resume_file ${outdir}/ckpts/best_val_unseen \
+    --resume_file ${RESUME_FILE} \
     --use_wandb \
     --wandb_project "${WANDB_PROJECT}" \
     --wandb_entity "${WANDB_ENTITY}" \

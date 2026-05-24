@@ -68,6 +68,12 @@ def init_distributed(opts):
     print(f"Init distributed {init_param['rank']} - {init_param['world_size']}")
 
     dist.init_process_group(**init_param)
+    # Immediately warm up NCCL data-plane connections while all ranks are
+    # still at the same execution point (before any model loading).  Without
+    # this, NCCL lazily establishes socket connections on the first collective
+    # call; by that time, fast ranks can be waiting minutes for slow ones and
+    # the bootstrap sockets get RST'd ("Software caused connection abort").
+    dist.barrier()
     return rank
 
 

@@ -267,7 +267,7 @@ class R2RNavBatch(object):
                 near_d = d
         return near_id
 
-    def _eval_item(self, scan, pred_path, gt_path, gt_objid=None):
+    def _eval_item(self, scan, pred_path, gt_path, gt_objid=None, pred_objid=None):
         scores = {}
 
         shortest_distances = self.shortest_distances[scan]
@@ -289,11 +289,14 @@ class R2RNavBatch(object):
             scores['success'] = float(scores['nav_error'] < ERROR_MARGIN)
             scores['oracle_success'] = float(scores['oracle_error'] < ERROR_MARGIN)
         else:
-            # REVERIE
+            # REVERIE navigation success (DUET reverie/env.py; REVERIE challenge Nav-Succ / Nav-OSucc)
             goal_viewpoints = set(self.obj2vps['%s_%s'%(scan, str(gt_objid))])
             assert len(goal_viewpoints) > 0, '%s_%s'%(scan, str(gt_objid))
             scores['success'] = float(path[-1] in goal_viewpoints)
             scores['oracle_success'] = float(any(x in goal_viewpoints for x in path))
+            if pred_objid is not None:
+                scores['rgs'] = float(str(pred_objid) == str(gt_objid))
+                scores['rgspl'] = scores['rgs'] * gt_lengths / max(scores['trajectory_lengths'], gt_lengths, 0.01)
         
         scores['spl'] = scores['success'] * gt_lengths / max(scores['trajectory_lengths'], gt_lengths, 0.01)
         scores.update(
@@ -309,11 +312,15 @@ class R2RNavBatch(object):
         print('eval %d predictions' % (len(preds)))
 
         metrics = defaultdict(list)
+        has_pred_objid = False
         for item in preds:
             instr_id = item['instr_id']
             traj = item['trajectory']
+            pred_objid = item.get('pred_objid')
+            if pred_objid is not None:
+                has_pred_objid = True
             scan, gt_traj, gt_objid = self.gt_trajs[instr_id]
-            traj_scores = self._eval_item(scan, traj, gt_traj, gt_objid)
+            traj_scores = self._eval_item(scan, traj, gt_traj, gt_objid, pred_objid=pred_objid)
             for k, v in traj_scores.items():
                 metrics[k].append(v)
             metrics['instr_id'].append(instr_id)
@@ -331,5 +338,26 @@ class R2RNavBatch(object):
             'SDTW': np.mean(metrics['SDTW']) * 100,
             'CLS': np.mean(metrics['CLS']) * 100,
         }
+        if self.obj2vps is not None:
+            print(
+                '[REVERIE] Nav-Succ (sr)=%.2f  Nav-OSucc (oracle_sr)=%.2f  '
+                'Nav-SPL (spl)=%.2f  Nav-Length (lengths)=%.2f' % (
+                    avg_metrics['sr'], avg_metrics['oracle_sr'],
+                    avg_metrics['spl'], avg_metrics['lengths'],
+                )
+            )
+            if has_pred_objid:
+                avg_metrics['rgs'] = np.mean(metrics['rgs']) * 100
+                avg_metrics['rgspl'] = np.mean(metrics['rgspl']) * 100
+                print(
+                    '[REVERIE] RGS=%.2f  RGSPL=%.2f (primary REVERIE metric)' % (
+                        avg_metrics['rgs'], avg_metrics['rgspl'],
+                    )
+                )
+            else:
+                print(
+                    '[REVERIE] RGS/RGSPL not computed: predictions lack pred_objid '
+                    '(navigation-only agent; see DUET reverie/main_nav_obj.py for full REVERIE eval).'
+                )
         return avg_metrics, metrics
         

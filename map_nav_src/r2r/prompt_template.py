@@ -6,6 +6,15 @@ The navigable locations are listed below: {candidate};
 
 Please choose the next direction."""
 
+# Idea B: Sub-instruction prompt — highlights the estimated current action step
+NavGPT_SUB_INSTR_PROMPT = """You are navigating in an indoor environment given the full instruction: [INST]{instruction}[/INST];
+
+Your current action step to focus on: {current_sub_instr};
+
+The navigable locations are listed below: {candidate};
+
+Please choose the next direction."""
+
 PLANNER_PROMPT = """Given the long instruction: {instruction}
 
 Divide the long instruction into action steps with detailed descriptions in the following format:

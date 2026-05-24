@@ -40,7 +40,11 @@ def construct_instrs(anno_dir, dataset, splits, tokenizer, max_instr_len=512, is
             if dataset == 'REVERIE':
                 new_item['instr_id'] = '%s_%d' % (item['id'], j)
             elif dataset == 'rxr-en':
-                new_item['instr_id'] = '%d_%d'%(item['path_id'], item['instruction_id'])
+                if 'path_id' in item:
+                    new_item['instr_id'] = '%d_%d' % (item['path_id'], item['instruction_id'])
+                else:
+                    # test_standard public guide (no path_id)
+                    new_item['instr_id'] = '%s_%d' % (item['scan'], item['instruction_id'])
             else:
                 new_item['instr_id'] = '%s_%d' % (item['path_id'], j)
             new_item['instruction'] = instr

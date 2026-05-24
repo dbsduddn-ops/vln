@@ -99,6 +99,7 @@ class GraphMap(object):
         self.node_positions = {}             # viewpoint to position (x, y, z)
         self.graph = FloydGraph()   # shortest path graph
         self.node_embeds = {}       # {viewpoint: feature (sum feature, count)}
+        self.node_hist_embeds = {}  # optional history token per viewpoint: (sum feature, count)
         self.node_stop_scores = {}  # {viewpoint: prob}
         self.node_nav_scores = {}   # {viewpoint: {t: prob}}
         self.node_step_ids = {}
@@ -124,6 +125,21 @@ class GraphMap(object):
     
     def get_node_embed(self, vp):
         return self.node_embeds[vp][0] / self.node_embeds[vp][1]
+
+    def update_node_hist_embed(self, vp, embed, rewrite=False):
+        if rewrite:
+            self.node_hist_embeds[vp] = [embed, 1]
+        else:
+            if vp in self.node_hist_embeds:
+                self.node_hist_embeds[vp][0] += embed
+                self.node_hist_embeds[vp][1] += 1
+            else:
+                self.node_hist_embeds[vp] = [embed, 1]
+
+    def get_node_hist_embed(self, vp):
+        if vp in self.node_hist_embeds:
+            return self.node_hist_embeds[vp][0] / self.node_hist_embeds[vp][1]
+        return self.get_node_embed(vp)
 
     def get_pos_fts(self, cur_vp, gmap_vpids, cur_heading, cur_elevation, angle_feat_size=4):
         # dim=7 (sin(heading), cos(heading), sin(elevation), cos(elevation),

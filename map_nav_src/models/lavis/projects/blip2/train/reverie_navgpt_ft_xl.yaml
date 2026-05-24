@@ -11,7 +11,7 @@ model:
   freeze_vit: True
 
 datasets:
-  r2r_navgpt: # name of the dataset builder
+  r2r_navgpt: # keep existing builder; expects NavGPT-style annotations
     vis_processor:
         train:
           name: "blip_image_eval"
@@ -27,8 +27,17 @@ datasets:
           name: "blip_navgpt_prompt"
           prompt: "You are navigating in an indoor environment given the instruction: {instruction}; The navigable locations are listed below: {candidate}; Please choose the next direction."
     build_info:
-        features:
-            storage: datasets/R2R/features/MP3D_eva_clip_g_can.lmdb
+      annotations:
+        # NOTE: these files must be NavGPT-style samples with keys like
+        # sample_id, scan, viewpoint, candidate, instruction, llm_thought.
+        train:
+          url: datasets/REVERIE/NavGPT-Instruct/REVERIE_NavGPT_train_v1.json
+          storage: datasets/REVERIE/NavGPT-Instruct/REVERIE_NavGPT_train_v1.json
+        val:
+          url: datasets/REVERIE/NavGPT-Instruct/REVERIE_NavGPT_val_v1.json
+          storage: datasets/REVERIE/NavGPT-Instruct/REVERIE_NavGPT_val_v1.json
+      features:
+        storage: datasets/R2R/features/MP3D_eva_clip_g_can.lmdb
 
 run:
   task: r2r_captioning
@@ -50,7 +59,7 @@ run:
   num_beams: 5
 
   seed: 42
-  output_dir: "output/NavGPT-InstructBLIP-FlanT5xl/"
+  output_dir: "output/NavGPT-InstructBLIP-FlanT5xl-REVERIE/"
 
   amp: True
   resume_ckpt_path: null
@@ -58,10 +67,9 @@ run:
   evaluate: False
   train_splits: ["train"]
   valid_splits: ["val"]
-  # test_splits: ["test"]
 
   device: "cuda"
-  # Set world_size to the number of GPUs (must match --nproc_per_node in train_NavGPT_xl.sh)
-  world_size: 4
+  # Set world_size to the number of GPUs (must match --nproc_per_node in train_REVERIE_xl.sh)
+  world_size: 1
   dist_url: "env://"
   distributed: True

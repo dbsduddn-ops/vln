@@ -9,6 +9,7 @@ from collections import defaultdict
 
 import torch
 import torch.nn as nn
+import torch.distributed as dist
 from torch import optim
 import torch.nn.functional as F
 from torch.nn.parallel import DistributedDataParallel as DDP
@@ -27,7 +28,20 @@ class BaseAgent(object):
     def get_results(self, detailed_output=False):
         output = []
         for k, v in self.results.items():
-            output.append({'instr_id': k, 'trajectory': v['path']})
+            # Normalize trajectories for submission:
+            # internal rollout may store a step as a multi-hop subpath (e.g., [a, b, c]).
+            # Eval scripts expect a sequential trajectory; emit one viewpoint per step.
+            flat_path = []
+            for step in v['path']:
+                if isinstance(step, list):
+                    for vp in step:
+                        if isinstance(vp, str) and (len(flat_path) == 0 or flat_path[-1] != vp):
+                            flat_path.append(vp)
+                elif isinstance(step, str):
+                    if len(flat_path) == 0 or flat_path[-1] != step:
+                        flat_path.append(step)
+
+            output.append({'instr_id': k, 'trajectory': [[vp] for vp in flat_path]})
             if detailed_output:
                 output[-1]['details'] = v['details']
                 output[-1]['thoughts'] = v['thoughts']
@@ -122,6 +136,12 @@ class Seq2SeqAgent(BaseAgent):
             )
 
         if self.args.world_size > 1:
+            # Barrier ensures all ranks have finished model loading before the
+            # first NCCL collective inside DDP init.  The NCCL data-plane
+            # connections were pre-established by the barrier called right after
+            # init_process_group (in utils/distributed.py), so this call reuses
+            # those already-alive TCP connections instead of opening new ones.
+            dist.barrier()
             self.NavGPT = DDP(self.NavGPT, device_ids=[self.rank], find_unused_parameters=True)
             self.critic = DDP(self.critic, device_ids=[self.rank], find_unused_parameters=True)
 

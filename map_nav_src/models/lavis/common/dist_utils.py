@@ -8,10 +8,27 @@
 import datetime
 import functools
 import os
+import urllib.request
 
 import torch
 import torch.distributed as dist
-import timm.models.hub as timm_hub
+
+
+def _get_cache_dir():
+    """Return (and create) the torch hub checkpoints cache directory."""
+    cache_dir = os.path.join(torch.hub.get_dir(), "checkpoints")
+    os.makedirs(cache_dir, exist_ok=True)
+    return cache_dir
+
+
+def _download_url_to_file(url, dst, progress=False):
+    """Download *url* to *dst*, optionally showing a progress bar."""
+    try:
+        torch.hub.download_url_to_file(url, dst, progress=progress)
+    except Exception:
+        # Fallback: plain urllib if torch.hub.download_url_to_file is unavailable
+        with urllib.request.urlopen(url) as resp, open(dst, "wb") as f:
+            f.write(resp.read())
 
 
 def setup_for_distributed(is_master):
@@ -120,18 +137,18 @@ def download_cached_file(url, check_hash=True, progress=False):
     If distributed, only the main process downloads the file, and the other processes wait for the file to be downloaded.
     """
 
-    def get_cached_file_path():
-        # a hack to sync the file path across processes
-        parts = torch.hub.urlparse(url)
-        filename = os.path.basename(parts.path)
-        cached_file = os.path.join(timm_hub.get_cache_dir(), filename)
+    parts = urllib.request.urlparse(url)
+    filename = os.path.basename(parts.path)
+    cached_file = os.path.join(_get_cache_dir(), filename)
 
-        return cached_file
+    if not os.path.exists(cached_file):
+        # Only download (and barrier) if the file is not yet cached.
+        # Skipping the NCCL barrier when the file already exists avoids
+        # socket-abort errors that occur during model init in multi-GPU runs.
+        if is_main_process():
+            _download_url_to_file(url, cached_file, progress=progress)
 
-    if is_main_process():
-        timm_hub.download_cached_file(url, check_hash, progress)
+        if is_dist_avail_and_initialized():
+            dist.barrier()
 
-    if is_dist_avail_and_initialized():
-        dist.barrier()
-
-    return get_cached_file_path()
+    return cached_file

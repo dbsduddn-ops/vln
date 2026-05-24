@@ -46,6 +46,7 @@ from transformers.utils import logging
 from transformers.models.bert.configuration_bert import BertConfig
 
 logger = logging.get_logger(__name__)
+AGENT_DEBUG = os.environ.get("NAVGPT_AGENT_DEBUG", "0") == "1"
 
 
 class BertEmbeddings(nn.Module):
@@ -88,13 +89,103 @@ class BertEmbeddings(nn.Module):
             seq_length = 0
 
         if position_ids is None:
-            position_ids = self.position_ids[
-                :, past_key_values_length : seq_length + past_key_values_length
-            ].clone()
+            # region agent log
+            try:
+                import json, time
+                _base = self.position_ids
+                _base_min = int(_base.min().item()) if _base.numel() else None
+                _base_max = int(_base.max().item()) if _base.numel() else None
+                _payload = {
+                    "id": f"qformer_posbuf_{int(time.time()*1000)}",
+                    "timestamp": int(time.time() * 1000),
+                    "runId": "pre-fix",
+                    "hypothesisId": "H2",
+                    "location": "Qformer.py:BertEmbeddings.forward:position_buffer_check",
+                    "message": "Inspect Qformer position_ids buffer before slice",
+                    "data": {
+                        "buffer_shape": list(_base.shape),
+                        "buffer_dtype": str(_base.dtype),
+                        "buffer_min": _base_min,
+                        "buffer_max": _base_max,
+                        "need_len": int(seq_length + past_key_values_length),
+                        "num_pos_embeddings": int(self.position_embeddings.num_embeddings),
+                    },
+                }
+                if AGENT_DEBUG:
+                    print("AGENT_LOG " + json.dumps(_payload), flush=True)
+            except Exception:
+                pass
+            # endregion agent log
+
+            _need_len = seq_length + past_key_values_length
+            _pos_num = int(self.position_embeddings.num_embeddings)
+            _buf_valid = (
+                self.position_ids.dtype == torch.long
+                and self.position_ids.dim() == 2
+                and self.position_ids.size(0) == 1
+                and self.position_ids.size(1) >= _need_len
+                and self.position_ids.numel() > 0
+                and int(self.position_ids[0, 0].item()) == 0
+                and int(self.position_ids.max().item()) < _pos_num
+            )
+            if not _buf_valid:
+                # If checkpoint/runtime corruption touches the registered buffer,
+                # regenerate canonical [0..max_position_embeddings-1] IDs.
+                _regen = torch.arange(_pos_num, device=input_ids.device, dtype=torch.long).unsqueeze(0)
+                position_ids = _regen[
+                    :, past_key_values_length : seq_length + past_key_values_length
+                ].clone()
+            else:
+                position_ids = self.position_ids[
+                    :, past_key_values_length : seq_length + past_key_values_length
+                ].clone()
 
         if input_ids is not None:
             embeddings = self.word_embeddings(input_ids)
             if self.position_embedding_type == "absolute":
+                # region agent log
+                try:
+                    import json, time
+                    _pos_min = int(position_ids.min().item()) if position_ids.numel() else None
+                    _pos_max = int(position_ids.max().item()) if position_ids.numel() else None
+                    _pos_num = int(self.position_embeddings.num_embeddings)
+                    _ids_min = int(input_ids.min().item()) if input_ids.numel() else None
+                    _ids_max = int(input_ids.max().item()) if input_ids.numel() else None
+                    _ids_vocab = int(self.word_embeddings.num_embeddings)
+                    _payload = {
+                        "id": f"qformer_embed_{int(time.time()*1000)}",
+                        "timestamp": int(time.time() * 1000),
+                        "runId": "pre-fix",
+                        "hypothesisId": "H1",
+                        "location": "Qformer.py:BertEmbeddings.forward:absolute_pos",
+                        "message": "Qformer absolute position embedding lookup inputs",
+                        "data": {
+                            "input_ids_shape": list(input_ids.shape),
+                            "position_ids_shape": list(position_ids.shape),
+                            "past_key_values_length": int(past_key_values_length),
+                            "seq_length": int(seq_length),
+                            "query_len": int(query_embeds.shape[1]) if query_embeds is not None else 0,
+                            "pos_min": _pos_min,
+                            "pos_max": _pos_max,
+                            "pos_num_embeddings": _pos_num,
+                            "tok_min": _ids_min,
+                            "tok_max": _ids_max,
+                            "tok_vocab_size": _ids_vocab,
+                        },
+                    }
+                    if AGENT_DEBUG:
+                        with open("/coss/ywyoun/.cursor/debug.log", "a", encoding="utf-8") as f:
+                            f.write(json.dumps(_payload) + "\n")
+                        print("AGENT_LOG " + json.dumps(_payload), flush=True)
+                except Exception:
+                    pass
+                # endregion agent log
+                if position_ids.numel() and int(position_ids.max().item()) >= int(self.position_embeddings.num_embeddings):
+                    raise ValueError(
+                        f"[DEBUG] Qformer position_ids OOB: max={int(position_ids.max().item())} "
+                        f">= num_embeddings={int(self.position_embeddings.num_embeddings)}; "
+                        f"position_ids_shape={tuple(position_ids.shape)} input_ids_shape={tuple(input_ids.shape)}"
+                    )
                 position_embeddings = self.position_embeddings(position_ids)
                 embeddings = embeddings + position_embeddings
 
