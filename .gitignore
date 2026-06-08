@@ -11,7 +11,13 @@ __pycache__/
 
 datasets/*
 !datasets/.gitkeep
+**/exprs_map/
 map_nav_src/models/lavis/output
 map_nav_src/models/data
 !map_nav_src/models/data/.gitkeep
 map_nav_src/wandb/
+Matterport3DSimulator/
+*.pth
+*.pt
+*.ckpt
+.nfs*
